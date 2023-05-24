@@ -1,0 +1,35 @@
+RAW_DATA_DIR: 'data'                      # The folder that has all EXCELs
+GLUCOSE_DATA_DIR: 'data/raw_data/data_test/' # Directory containing CSVs with CGM values (see provided CSV for template)
+PEAK_DATA_DIR: 'data/peak_data/'       # Directory to store the data of extracted peaks
+PEAK_DATA_FILE: 'extracted_peaks.yaml'               # The file that stores subjects' peak data.
+LOG_DIR: 'data/log_data/'              # The folder that will storoe all the output images and other log files
+
+EXP_INITIATE_FROM: 'GLUCOSE_DATA'  # Values: 'RAW_DATA', 'GLUCOSE_DATA', 'PEAK_DATA'
+                                # 'RAW_DATA': EXCELs -> CSVs -> PEAK selection -> RUN EXPRIEMENT
+                                # 'GLUCOSE_DATA': CSVs -> PEAK selection -> RUN EXPRIEMENT
+                                # 'PEAK_DATA': PEAK data -> RUN EXPRIEMENT
+RUN_SUBJECTS:                   # One can choose to run all subjects, or a selection of subjects.
+  OPTIONS: 'ALL'                # Values: 'ALL' or 'SELECTION'.
+  ### Only of one of the following options wil run. It depends on 'OPTIONS' ###
+  ALL: true                     # Values: true, false      
+  SELECTION:        
+    selected_idx:                # Values: unlimited list of the subject indices
+    - 10
+    - 14
+    - 1
+
+PARAMS:
+  tstep: 1.0                    # Time step between measurements (normalized to 1, i.e. we measure in units of 15 mins)
+  lam: 0.4116421339794699
+  A1: 0.1
+  A2: 0.1
+  A3: 0.005                     # Fixes base metabolic rate.
+  A4: 1.0                       # Fixed to unity by nondimensionalization.
+  h:  1.0                       # Time step for explicit Euler approximation of e (in units 15 mins)
+  amp: 1.7524890366951094       # The height (ampl) should be about equal to the maximum of e_original, the shift and the width should be such that the "meal" takes about 15-45 minutes and ends around the time e_original peaks
+  sig: 1.0                      # Standard deviation in F
+  delta: 0.01                   # Finite difference parameter. This is now a fraction, i.e. the actual finite difference parameter will be (delta * A) for the derivative wrt A. This is important because the parameters may become as small as delta during the gradient descent iteration, in which case the approximation of the derivative would break down.
+  sc: 0.0001                    # Scaling of the gradient for the descent step. Comment: this is now fixed, but we may have to change it depending on the convergence speed.
+  sc_min: 1e-12                 # Minimal value of sc, if it drops below this threshold the gradient descent stops.
+  numIterations: 150000         # Maximal number of gradient descent steps - since the convergence is linear the required number can be large (thousands).
+
