@@ -1,5 +1,4 @@
 # Returns the value of e off the "time grid" of k*Delta (Delta = 15mins) using cubic spline interpolation.
-# Not sure if this is used at all!
 import numpy as np
 from scipy.interpolate import CubicSpline
 

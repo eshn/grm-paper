@@ -147,7 +147,261 @@ if __name__ == '__main__':
                 default='./data/post-fit_params/batch_params_klick600/')
     args = parser.parse_args()
 
-    if args.mode == 3:
+    # train only with report on train data
+    if args.mode == 1:
+        masterlist = args.mlist
+
+        # path to yaml files containing model parameters after fitting to model. can be a list of paths if there are multiple folders
+        train_data = [args.trainset]
+
+        # initialize objects to store model parameters
+        p_train = Parameters()
+
+        # Load subject data
+        print('Loading Subject Data From ' + masterlist)
+        data_train = get_data(fpath=masterlist, studies=[args.trainstudy], include_personal_measurements=True, include_diags_only=False)
+
+        # Drops individuals who are missing any measurements specified in the "filters" list
+        filters = ['HbA1c (%)', 'Age', 'BMI (kg/m^2)', 'Class']
+        data_train.dropna(subset=filters, inplace=True)
+
+        # Load parameters from yaml files. Passes in an object from the Parameters class then returns the same object but filled
+        print('Reading Parameter Data from YAML...')
+        for ypath in train_data:
+            p_train, _, _ = load_params_from_yaml(params=p_train, data=data_train, yaml_path=ypath)
+
+        augment = True
+        thresholds, weights, train_params = pa.train(p_train, augment=augment)
+
+        GRM_train, pred_train, labels_train, conf_mat_train = pa.predict(p_train, thresholds, weights, train_params, augment=augment)
+
+        #### PLOTTING AND SUMMARY STATISTICS
+        fig, ax = plt.subplots(1)
+
+        ''' PREDICTIONS WITH TRAINING SET'''
+        prec, rec, f1, accs = get_scores_from_conf_mat(conf_mat_train)
+
+        #### OvR:
+        # split into three sets for each OvR classification: healthy vs rest, prediabetic vs rest, diabetic vs rest
+        h_label = np.array([1 if i == 1 else 0 for i in labels_train])
+        p_label = np.array([1 if i == 2 else 0 for i in labels_train])
+        d_label = np.array([1 if i == 3 else 0 for i in labels_train])
+
+        # flip the order so healthy is closer to 1
+        h_pred = GRM_train / np.max(GRM_train)
+        p_pred = copy(h_pred)
+        d_pred = copy(h_pred)
+
+        # flip the order so healthy is closer to 1
+        h_pred = np.ones(h_pred.shape) - h_pred
+
+
+        h_fpr, h_tpr, h_thresholds = roc_curve(h_label, h_pred)
+        p_fpr, p_tpr, p_thresholds = roc_curve(p_label, p_pred)
+        d_fpr, d_tpr, d_thresholds = roc_curve(d_label, d_pred)
+
+        h_prec, h_rec, _ = precision_recall_curve(h_label, h_pred)
+        p_prec, p_rec, _ = precision_recall_curve(p_label, p_pred)
+        d_prec, d_rec, _ = precision_recall_curve(d_label, d_pred)
+
+
+        ax.plot(h_fpr, h_tpr, label='Non-Diabetic. AUC: {:.4f}'.format(roc_auc_score(h_label, h_pred)))
+        # ax.plot(p_fpr, p_tpr, label='Prediabetic. AUC: {:.4f}'.format(roc_auc_score(p_label, p_pred)))
+        ax.plot(d_fpr, d_tpr, label='Diabetic. AUC: {:.4f}'.format(roc_auc_score(d_label, d_pred)))
+        ax.plot([0,1], [0,1], '--')
+        ax.set_xlabel('False Positive Rate')
+        ax.set_ylabel('True Positive Rate')
+        ax.set_title('ROC for Klick-150')
+        ax.grid(alpha=0.4)
+        ax.legend(loc='lower right')
+
+        Precision_H = prec[0]
+        Precision_P = prec[1]
+        Precision_D = prec[2]
+
+        Recall_H = rec[0]
+        Recall_P = rec[1]
+        Recall_D = rec[2]
+
+        F1_H = f1[0]
+        F1_P = f1[1]
+        F1_D = f1[2]
+
+        acc = accs[0]
+        bal_acc = accs[1]
+
+        print('-------------Summary-------------')
+        print('Total Predictions: {}'.format(int(np.sum(conf_mat_train[:]))))
+        print('Males: {}'.format(np.sum(np.array([i == 'Male' for i in p_train.sex]))))
+        print('Females: {}'.format(np.sum(np.array([i == 'Female' for i in p_train.sex]))))
+        print('=======Healthy======')
+        print('Precision: {}'.format(Precision_H))
+        print('Recall: {}'.format(Recall_H))
+        print('F1: {}'.format(F1_H))
+        print('=======Prediabetic======')
+        print('Precision: {}'.format(Precision_P))
+        print('Recall: {}'.format(Recall_P))
+        print('F1: {}'.format(F1_P))
+        print('=======Diabetic======')
+        print('Precision: {}'.format(Precision_D))
+        print('Recall: {}'.format(Recall_D))
+        print('F1: {}'.format(F1_D))
+        print('========ROCs=======')
+        print('healthy roc auc: {}'.format(roc_auc_score(h_label, h_pred)))
+        # print('prediabetic roc auc: {}'.format(roc_auc_score(p_label, p_pred)))       # Omitted since this is an intermediate case in of a multiclass classification problem
+        print('diabetic roc auc: {}'.format(roc_auc_score(d_label, d_pred)))
+        print('======Overall======')
+        print('accuracy: {}'.format(acc))
+        print('balacned accuracy: {}'.format(bal_acc))
+
+        print(conf_mat_train)
+
+        plt.show()
+
+        print('--------THRESHOLDS, WEIGHTS, AND TRAINING PARAMS------')
+        print('Thresholds: {}'.format(thresholds))
+        print('Weights: {}'.format(weights))
+        print('Exponential Params: {}'.format(train_params))
+
+
+    # test with pre-trained weights
+    elif args.mode == 2:
+        masterlist = args.mlist
+
+        # path to yaml files containing model parameters after fitting to model. can be a list of paths if there are multiple folders
+        test_data = [args.testset]
+
+        # initialize objects to store model parameters
+        p_test = Parameters()
+
+        # Load subject data
+        print('Loading Subject Data From ' + masterlist)
+        data_test = get_data(fpath=masterlist, studies=[args.teststudy], include_personal_measurements=True, include_diags_only=False)
+
+        # Drops individuals who are missing any measurements specified in the "filters" list
+        filters = ['HbA1c (%)', 'Age', 'BMI (kg/m^2)', 'Class']
+        data_test.dropna(subset=filters, inplace=True)
+
+        # Load parameters from yaml files. Passes in an object from the Parameters class then returns the same object but filled
+        print('Reading Parameter Data from YAML...')
+        for ypath in test_data:
+            p_test, _, _ = load_params_from_yaml(params=p_test, data=data_test, yaml_path=ypath)
+
+
+        # weights from paper
+        thresholds = [0.49227448209555064, 0.5433666878968003]
+        weightsX = np.array([[ 0.00223314],
+        [-0.00116625],
+        [-0.00018821],
+        [-0.01228498],
+        [ 0.01728798],
+        [-0.00996337],
+        [-0.07715301],
+        [-0.05217193],
+        [ 0.02981586],
+        [-0.00927283],
+        [-0.00488361],
+        [-0.00819811],
+        [ 0.00259885]])
+
+        weightsY = np.array([[-0.13321868]])
+
+        weights = [weightsX, weightsY]
+
+        train_params = [[np.array([ 0.20933155,  0.15639031,  0.68704591,  0.09740014,  0.09234949,
+        0.69248676, 21.43987957,  0.50141083,  0.14864092,  0.89010111,
+        3.87393704, 60.        , 43.3       ]), 11.9], [[10], [1.3454220665412397]]]
+
+
+        GRM_test, pred_test, labels_test, conf_mat_test = pa.predict(p_test, thresholds, weights, train_params)
+
+
+        #### PLOTTING AND SUMMARY STATISTICs
+        ''' PREDICTIONS WITH TEST SET '''
+        prec, rec, f1, accs = get_scores_from_conf_mat(conf_mat_test)
+        #### OvR:
+        # split into three sets for each OvR classification: healthy vs rest, prediabetic vs rest, diabetic vs rest
+        h_label = np.array([1 if i == 1 else 0 for i in labels_test])
+        p_label = np.array([1 if i == 2 else 0 for i in labels_test])
+        d_label = np.array([1 if i == 3 else 0 for i in labels_test])
+
+        # flip the order so healthy is closer to 1
+        h_pred = GRM_test / np.max(GRM_test)
+        p_pred = copy(h_pred)
+        d_pred = copy(h_pred)
+
+        # flip the order so healthy is closer to 1
+        h_pred = np.ones(h_pred.shape) - h_pred
+
+        h_fpr, h_tpr, h_thresholds = roc_curve(h_label, h_pred)
+        p_fpr, p_tpr, p_thresholds = roc_curve(p_label, p_pred)
+        d_fpr, d_tpr, d_thresholds = roc_curve(d_label, d_pred)
+
+        h_prec, h_rec, _ = precision_recall_curve(h_label, h_pred)
+        p_prec, p_rec, _ = precision_recall_curve(p_label, p_pred)
+        d_prec, d_rec, _ = precision_recall_curve(d_label, d_pred)
+
+
+        print('healthy roc auc: {}'.format(roc_auc_score(h_label, h_pred)))
+        # print('prediabetic roc auc: {}'.format(roc_auc_score(p_label, p_pred)))
+        print('diabetic roc auc: {}'.format(roc_auc_score(d_label, d_pred)))
+
+        fig, ax = plt.subplots(1)
+        ax.plot(h_fpr, h_tpr, label='Non-Diabetic. AUC: {:.4f}'.format(roc_auc_score(h_label, h_pred)))
+        # ax[1].plot(p_fpr, p_tpr, label='Prediabetic. AUC: {:.4f}'.format(roc_auc_score(p_label, p_pred)))
+        ax.plot(d_fpr, d_tpr, label='Diabetic. AUC: {:.4f}'.format(roc_auc_score(d_label, d_pred)))
+        ax.plot([0,1], [0,1], '--')
+        ax.set_xlabel('False Positive Rate')
+        ax.set_ylabel('True Positive Rate')
+        ax.set_title('ROC')
+        ax.grid(alpha=0.4)
+        ax.legend(loc='lower right')
+
+        Precision_H = prec[0]
+        Precision_P = prec[1]
+        Precision_D = prec[2]
+
+        Recall_H = rec[0]
+        Recall_P = rec[1]
+        Recall_D = rec[2]
+
+        F1_H = f1[0]
+        F1_P = f1[1]
+        F1_D = f1[2]
+
+        acc = accs[0]
+        bal_acc = accs[1]
+
+        print('-------------Statistics-------------')
+        print('Total Predictions: {}'.format(int(np.sum(conf_mat_test[:]))))
+        print('Males: {}'.format(np.sum(np.array([i == 'Male' for i in p_test.sex]))))
+        print('Females: {}'.format(np.sum(np.array([i == 'Female' for i in p_test.sex]))))
+        print('=======Healthy======')
+        print('Precision: {}'.format(Precision_H))
+        print('Recall: {}'.format(Recall_H))
+        print('F1: {}'.format(F1_H))
+        print('=======Prediabetic======')
+        print('Precision: {}'.format(Precision_P))
+        print('Recall: {}'.format(Recall_P))
+        print('F1: {}'.format(F1_P))
+        print('=======Diabetic======')
+        print('Precision: {}'.format(Precision_D))
+        print('Recall: {}'.format(Recall_D))
+        print('F1: {}'.format(F1_D))
+        print('========ROCs=======')
+        print('healthy roc auc: {}'.format(roc_auc_score(h_label, h_pred)))
+        # print('prediabetic roc auc: {}'.format(roc_auc_score(p_label, p_pred)))
+        print('diabetic roc auc: {}'.format(roc_auc_score(d_label, d_pred)))
+        print('======Overall======')
+        print('accuracy: {}'.format(acc))
+        print('balacned accuracy: {}'.format(bal_acc))
+
+        print(conf_mat_test)
+
+        plt.show()
+
+    # train + test with report on test data
+    elif args.mode == 3:
         masterlist = args.mlist
 
         # path to yaml files containing model parameters after fitting to model. can be a list of paths if there are multiple folders
@@ -167,7 +421,7 @@ if __name__ == '__main__':
         filters = ['HbA1c (%)', 'Age', 'BMI (kg/m^2)', 'Class']
         data_train.dropna(subset=filters, inplace=True)
         data_test.dropna(subset=filters, inplace=True)
-
+        
         # Load parameters from yaml files. Passes in an object from the Parameters class then returns the same object but filled
         print('Reading Parameter Data from YAML...')
         for ypath in train_data:
@@ -175,14 +429,16 @@ if __name__ == '__main__':
         for ypath in test_data:
             p_test, _, _ = load_params_from_yaml(params=p_test, data=data_test, yaml_path=ypath)
 
-        thresholds, weights, train_params = pa.train(p_train)
+        augment = True
+
         # train_params is a list consisting of the following:
         # train_params[0]: list containing two elements: 1) list of normalization factors in X (index 0), and 2) normalization factor in Y (scalar)
         # train_params[1]: list of two elements: 1) column indices of X that are exponentially augmented, 2) the corresponding exp growth/decay rate
 
+        thresholds, weights, train_params = pa.train(p_train, augment=augment)
 
-        GRM_train, pred_train, labels_train, conf_mat_train = pa.predict(p_train, thresholds, weights, train_params)
-        GRM_test, pred_test, labels_test, conf_mat_test = pa.predict(p_test, thresholds, weights, train_params)
+        GRM_train, pred_train, labels_train, conf_mat_train = pa.predict(p_train, thresholds, weights, train_params, augment=augment)
+        GRM_test, pred_test, labels_test, conf_mat_test = pa.predict(p_test, thresholds, weights, train_params, augment=augment)
 
 
         #### PLOTTING AND SUMMARY STATISTICS
@@ -353,251 +609,6 @@ if __name__ == '__main__':
         print('Thresholds: {}'.format(thresholds))
         print('Weights: {}'.format(weights))
         print('Exponential Params: {}'.format(train_params))
+    
 
-    elif args.mode == 2:
-        masterlist = args.mlist
-
-        # path to yaml files containing model parameters after fitting to model. can be a list of paths if there are multiple folders
-        test_data = [args.testset]
-
-        # initialize objects to store model parameters
-        p_test = Parameters()
-
-        # Load subject data
-        print('Loading Subject Data From ' + masterlist)
-        data_test = get_data(fpath=masterlist, studies=[args.teststudy], include_personal_measurements=True, include_diags_only=False)
-
-        # Drops individuals who are missing any measurements specified in the "filters" list
-        filters = ['HbA1c (%)', 'Age', 'BMI (kg/m^2)', 'Class']
-        data_test.dropna(subset=filters, inplace=True)
-
-        # Load parameters from yaml files. Passes in an object from the Parameters class then returns the same object but filled
-        print('Reading Parameter Data from YAML...')
-        for ypath in test_data:
-            p_test, _, _ = load_params_from_yaml(params=p_test, data=data_test, yaml_path=ypath)
-
-
-        # weights from paper
-        thresholds = [0.48437462633121703, 0.5630536488964719]
-        # thresholds = [0.45837462633121703, 0.5630536488964719]
-        weightsX = np.array([[-0.01729736],
-       [-0.00124415],
-       [-0.00186463],
-       [ 0.00773906],
-       [ 0.02451672],
-       [-0.01195743],
-       [-0.00032777],
-       [-0.07090241],
-       [ 0.03363849],
-       [-0.01194681],
-       [-0.00919847],
-       [-0.0074819 ],
-       [-0.00141135]])
-        weightsY = np.array([[-0.13321868]])
-
-        weights = [weightsX, weightsY]
-
-        train_params = [[np.array([ 0.20933155,  0.15639031,  0.68704591,  0.09740014,  0.09234949,
-        0.69248676, 21.43987957,  0.50141083,  0.14864092,  0.89010111,
-        3.87393704, 60.        , 43.3       ]), 11.9], [[0, 6, 10], [-3.787044, 4.423684, 1.355863]]]
-
-
-        GRM_test, pred_test, labels_test, conf_mat_test = pa.predict(p_test, thresholds, weights, train_params)
-
-
-        #### PLOTTING AND SUMMARY STATISTICs
-        ''' PREDICTIONS WITH TEST SET '''
-        prec, rec, f1, accs = get_scores_from_conf_mat(conf_mat_test)
-        #### OvR:
-        # split into three sets for each OvR classification: healthy vs rest, prediabetic vs rest, diabetic vs rest
-        h_label = np.array([1 if i == 1 else 0 for i in labels_test])
-        p_label = np.array([1 if i == 2 else 0 for i in labels_test])
-        d_label = np.array([1 if i == 3 else 0 for i in labels_test])
-
-        # flip the order so healthy is closer to 1
-        h_pred = GRM_test / np.max(GRM_test)
-        p_pred = copy(h_pred)
-        d_pred = copy(h_pred)
-
-        # flip the order so healthy is closer to 1
-        h_pred = np.ones(h_pred.shape) - h_pred
-
-        h_fpr, h_tpr, h_thresholds = roc_curve(h_label, h_pred)
-        p_fpr, p_tpr, p_thresholds = roc_curve(p_label, p_pred)
-        d_fpr, d_tpr, d_thresholds = roc_curve(d_label, d_pred)
-
-        h_prec, h_rec, _ = precision_recall_curve(h_label, h_pred)
-        p_prec, p_rec, _ = precision_recall_curve(p_label, p_pred)
-        d_prec, d_rec, _ = precision_recall_curve(d_label, d_pred)
-
-
-        print('healthy roc auc: {}'.format(roc_auc_score(h_label, h_pred)))
-        # print('prediabetic roc auc: {}'.format(roc_auc_score(p_label, p_pred)))
-        print('diabetic roc auc: {}'.format(roc_auc_score(d_label, d_pred)))
-
-        fig, ax = plt.subplots(1)
-        ax.plot(h_fpr, h_tpr, label='Non-Diabetic. AUC: {:.4f}'.format(roc_auc_score(h_label, h_pred)))
-        # ax[1].plot(p_fpr, p_tpr, label='Prediabetic. AUC: {:.4f}'.format(roc_auc_score(p_label, p_pred)))
-        ax.plot(d_fpr, d_tpr, label='Diabetic. AUC: {:.4f}'.format(roc_auc_score(d_label, d_pred)))
-        ax.plot([0,1], [0,1], '--')
-        ax.set_xlabel('False Positive Rate')
-        ax.set_ylabel('True Positive Rate')
-        ax.set_title('ROC')
-        ax.grid(alpha=0.4)
-        ax.legend(loc='lower right')
-
-        Precision_H = prec[0]
-        Precision_P = prec[1]
-        Precision_D = prec[2]
-
-        Recall_H = rec[0]
-        Recall_P = rec[1]
-        Recall_D = rec[2]
-
-        F1_H = f1[0]
-        F1_P = f1[1]
-        F1_D = f1[2]
-
-        acc = accs[0]
-        bal_acc = accs[1]
-
-        print('-------------Statistics-------------')
-        print('Total Predictions: {}'.format(int(np.sum(conf_mat_test[:]))))
-        print('Males: {}'.format(np.sum(np.array([i == 'Male' for i in p_test.sex]))))
-        print('Females: {}'.format(np.sum(np.array([i == 'Female' for i in p_test.sex]))))
-        print('=======Healthy======')
-        print('Precision: {}'.format(Precision_H))
-        print('Recall: {}'.format(Recall_H))
-        print('F1: {}'.format(F1_H))
-        print('=======Prediabetic======')
-        print('Precision: {}'.format(Precision_P))
-        print('Recall: {}'.format(Recall_P))
-        print('F1: {}'.format(F1_P))
-        print('=======Diabetic======')
-        print('Precision: {}'.format(Precision_D))
-        print('Recall: {}'.format(Recall_D))
-        print('F1: {}'.format(F1_D))
-        print('========ROCs=======')
-        print('healthy roc auc: {}'.format(roc_auc_score(h_label, h_pred)))
-        # print('prediabetic roc auc: {}'.format(roc_auc_score(p_label, p_pred)))
-        print('diabetic roc auc: {}'.format(roc_auc_score(d_label, d_pred)))
-        print('======Overall======')
-        print('accuracy: {}'.format(acc))
-        print('balacned accuracy: {}'.format(bal_acc))
-
-        print(conf_mat_test)
-
-        plt.show()
-    elif args.mode == 1:
-        masterlist = args.mlist
-
-        # path to yaml files containing model parameters after fitting to model. can be a list of paths if there are multiple folders
-        train_data = [args.trainset]
-
-        # initialize objects to store model parameters
-        p_train = Parameters()
-
-        # Load subject data
-        print('Loading Subject Data From ' + masterlist)
-        data_train = get_data(fpath=masterlist, studies=[args.trainstudy], include_personal_measurements=True, include_diags_only=False)
-
-        # Drops individuals who are missing any measurements specified in the "filters" list
-        filters = ['HbA1c (%)', 'Age', 'BMI (kg/m^2)', 'Class']
-        data_train.dropna(subset=filters, inplace=True)
-
-        # Load parameters from yaml files. Passes in an object from the Parameters class then returns the same object but filled
-        print('Reading Parameter Data from YAML...')
-        for ypath in train_data:
-            p_train, _, _ = load_params_from_yaml(params=p_train, data=data_train, yaml_path=ypath)
-
-        thresholds, weights, train_params = pa.train(p_train)
-
-        GRM_train, pred_train, labels_train, conf_mat_train = pa.predict(p_train, thresholds, weights, train_params)
-
-        #### PLOTTING AND SUMMARY STATISTICS
-        fig, ax = plt.subplots(1)
-
-        ''' PREDICTIONS WITH TRAINING SET'''
-        prec, rec, f1, accs = get_scores_from_conf_mat(conf_mat_train)
-
-        #### OvR:
-        # split into three sets for each OvR classification: healthy vs rest, prediabetic vs rest, diabetic vs rest
-        h_label = np.array([1 if i == 1 else 0 for i in labels_train])
-        p_label = np.array([1 if i == 2 else 0 for i in labels_train])
-        d_label = np.array([1 if i == 3 else 0 for i in labels_train])
-
-        # flip the order so healthy is closer to 1
-        h_pred = GRM_train / np.max(GRM_train)
-        p_pred = copy(h_pred)
-        d_pred = copy(h_pred)
-
-        # flip the order so healthy is closer to 1
-        h_pred = np.ones(h_pred.shape) - h_pred
-
-
-        h_fpr, h_tpr, h_thresholds = roc_curve(h_label, h_pred)
-        p_fpr, p_tpr, p_thresholds = roc_curve(p_label, p_pred)
-        d_fpr, d_tpr, d_thresholds = roc_curve(d_label, d_pred)
-
-        h_prec, h_rec, _ = precision_recall_curve(h_label, h_pred)
-        p_prec, p_rec, _ = precision_recall_curve(p_label, p_pred)
-        d_prec, d_rec, _ = precision_recall_curve(d_label, d_pred)
-
-
-        ax.plot(h_fpr, h_tpr, label='Non-Diabetic. AUC: {:.4f}'.format(roc_auc_score(h_label, h_pred)))
-        # ax.plot(p_fpr, p_tpr, label='Prediabetic. AUC: {:.4f}'.format(roc_auc_score(p_label, p_pred)))
-        ax.plot(d_fpr, d_tpr, label='Diabetic. AUC: {:.4f}'.format(roc_auc_score(d_label, d_pred)))
-        ax.plot([0,1], [0,1], '--')
-        ax.set_xlabel('False Positive Rate')
-        ax.set_ylabel('True Positive Rate')
-        ax.set_title('ROC for Klick-150')
-        ax.grid(alpha=0.4)
-        ax.legend(loc='lower right')
-
-        Precision_H = prec[0]
-        Precision_P = prec[1]
-        Precision_D = prec[2]
-
-        Recall_H = rec[0]
-        Recall_P = rec[1]
-        Recall_D = rec[2]
-
-        F1_H = f1[0]
-        F1_P = f1[1]
-        F1_D = f1[2]
-
-        acc = accs[0]
-        bal_acc = accs[1]
-
-        print('-------------Summary-------------')
-        print('Total Predictions: {}'.format(int(np.sum(conf_mat_train[:]))))
-        print('Males: {}'.format(np.sum(np.array([i == 'Male' for i in p_train.sex]))))
-        print('Females: {}'.format(np.sum(np.array([i == 'Female' for i in p_train.sex]))))
-        print('=======Healthy======')
-        print('Precision: {}'.format(Precision_H))
-        print('Recall: {}'.format(Recall_H))
-        print('F1: {}'.format(F1_H))
-        print('=======Prediabetic======')
-        print('Precision: {}'.format(Precision_P))
-        print('Recall: {}'.format(Recall_P))
-        print('F1: {}'.format(F1_P))
-        print('=======Diabetic======')
-        print('Precision: {}'.format(Precision_D))
-        print('Recall: {}'.format(Recall_D))
-        print('F1: {}'.format(F1_D))
-        print('========ROCs=======')
-        print('healthy roc auc: {}'.format(roc_auc_score(h_label, h_pred)))
-        # print('prediabetic roc auc: {}'.format(roc_auc_score(p_label, p_pred)))
-        print('diabetic roc auc: {}'.format(roc_auc_score(d_label, d_pred)))
-        print('======Overall======')
-        print('accuracy: {}'.format(acc))
-        print('balacned accuracy: {}'.format(bal_acc))
-
-        print(conf_mat_train)
-
-        plt.show()
-
-        print('--------THRESHOLDS, WEIGHTS, AND TRAINING PARAMS------')
-        print('Thresholds: {}'.format(thresholds))
-        print('Weights: {}'.format(weights))
-        print('Exponential Params: {}'.format(train_params))
+        
